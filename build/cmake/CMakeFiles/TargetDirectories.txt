@@ -1,0 +1,17 @@
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/CMakeFiles/custom_opp_ubuntu_x86_64.run.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/CMakeFiles/rebuild_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/CMakeFiles/rebuild_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/onnx_plugin/CMakeFiles/cust_onnx_parsers.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/onnx_plugin/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/onnx_plugin/CMakeFiles/rebuild_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_proto/CMakeFiles/cust_op_proto.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_proto/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_proto/CMakeFiles/rebuild_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_tiling/CMakeFiles/optiling.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_tiling/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_tiling/CMakeFiles/rebuild_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/tbe/CMakeFiles/op_impl.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/tbe/CMakeFiles/edit_cache.dir
+/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/tbe/CMakeFiles/rebuild_cache.dir

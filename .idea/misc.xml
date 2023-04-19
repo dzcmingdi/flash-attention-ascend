@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectRootManager" version="2" languageLevel="JDK_17" project-jdk-name="Python 3.7" project-jdk-type="Python SDK">
+    <output url="file://$PROJECT_DIR$/out" />
+  </component>
+  <component name="com.huawei.mind.studio.ssh.deploy.persistent.DeploySettingsState">
+    <option name="automaticUpload" value="true" />
+    <option name="deployModels">
+      <list>
+        <DeployModel>
+          <option name="default" value="true" />
+          <option name="name" value="atlas200dk" />
+          <option name="uuid" value="1a3bc00c-f690-4eef-874b-becc2c880cd5" />
+          <option name="deployConnectionModel" value="{&quot;deployConnectionType&quot;:&quot;SFTP&quot;,&quot;sshConnectionModel&quot;:{&quot;uuid&quot;:&quot;846dc741-61f2-4981-b61a-c73138c802bd&quot;}}" />
+          <option name="deployMappingModels" value="[{&quot;deploymentPath&quot;:&quot;/home/HwHiAiUser/Projects/flash-attention-op_45cd8d01&quot;,&quot;localPath&quot;:&quot;/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op&quot;}]" />
+        </DeployModel>
+      </list>
+    </option>
+  </component>
+</project>

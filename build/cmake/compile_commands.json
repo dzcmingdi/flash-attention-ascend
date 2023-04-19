@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/framework/onnx_plugin",
+  "command": "/usr/bin/c++ -D_GLIBCXX_USE_CXX11_ABI=0 -Dcust_onnx_parsers_EXPORTS -Dgoogle=ascend_private -I/usr/local/Ascend/compiler/include  -fstack-protector-all -fpic -fpie -D_FORTIFY_SOURCE=2 -O2 -fPIC -O2 -Wall -s -fPIC -fstack-protector-all -D_FORTIFY_SOURCE=2 -O2 -std=gnu++11 -o CMakeFiles/cust_onnx_parsers.dir/flash_attention_plugin.cc.o -c /home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/framework/onnx_plugin/flash_attention_plugin.cc",
+  "file": "/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/framework/onnx_plugin/flash_attention_plugin.cc"
+},
+{
+  "directory": "/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/build/cmake/op_proto",
+  "command": "/usr/bin/c++ -D_GLIBCXX_USE_CXX11_ABI=0 -Dcust_op_proto_EXPORTS -I/usr/local/Ascend/compiler/include  -fstack-protector-all -fpic -fpie -D_FORTIFY_SOURCE=2 -O2 -fPIC -O2 -Wall -s -fPIC -fstack-protector-all -D_FORTIFY_SOURCE=2 -O2 -std=gnu++11 -o CMakeFiles/cust_op_proto.dir/flash_attention.cc.o -c /home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/op_proto/flash_attention.cc",
+  "file": "/home/z203/DataFiles/Experiments/npu-tts-workdir/flash-attention-op/op_proto/flash_attention.cc"
+}
+]
