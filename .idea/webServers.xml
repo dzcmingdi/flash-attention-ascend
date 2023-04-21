@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="6898eeab-0e11-4206-8e58-138a8ec6fadf" name="atlas200dk">
+        <fileTransfer accessType="SFTP" host="192.168.0.235" port="22" sshConfigId="a2d933e3-ad97-478d-86d1-6b7e54940fb2" sshConfig="HwHiAiUser@192.168.0.235:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
