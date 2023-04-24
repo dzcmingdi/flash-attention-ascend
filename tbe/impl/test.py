@@ -1,6 +1,41 @@
 from tbe import tik
+from flash_attention import transpose_left_matrix, row_sum
 import tbe.common.platform as tbe_platform
 import numpy
+
+
+class Test:
+
+    def kernel0(self, q_type, kernel_name="kernel0"):
+        q_shape = q_type['shape']
+        k0 = 16
+        k = q_shape[1]
+        k1 = (k + k0 - 1) // k0
+        m = 16
+
+        tik_instance = tik.Tik(disable_debug=False)
+        q = tik_instance.Tensor(dtype='float16', shape=q_type['shape'], name="q", scope=tik.scope_gm)
+        q_ = tik_instance.Tensor(dtype='float16', shape=[k1, m, k0], name="q_", scope=tik.scope_gm)
+        transpose_left_matrix(tik_instance, q, q_, 'float16', k1, m, k0)
+
+        tik_instance.BuildCCE(kernel_name="kernel0", inputs=[q], outputs=[q_])
+        return tik_instance
+
+    def kernel1(self, q_type, kernel_name="kernel1"):
+        q_shape = q_type['shape']
+        tik_instance = tik.Tik(disable_debug=False)
+        q = tik_instance.Tensor(dtype='float16', shape=q_shape, name="q", scope=tik.scope_gm)
+        q_ = tik_instance.Tensor(dtype='float16', shape=q_shape, name="q", scope=tik.scope_ubuf)
+        tik_instance.data_move(q_, q, 0, 1, (q_shape[0] * q_shape[1]) // 16, 0, 0)
+        _output = tik_instance.Tensor(dtype='float16', shape=[q_shape[0]], name='output', scope=tik.scope_ubuf)
+        row_sum(q_, _output, tik_instance)
+
+        output = tik_instance.Tensor(dtype='float16', shape=[q_shape[0]], name='output', scope=tik.scope_gm)
+
+        tik_instance.data_move(output, _output, 0, 1, q_shape[0] // 16, 0, 0)
+        tik_instance.BuildCCE(kernel_name="kernel1", inputs=[q], outputs=[output])
+
+        return tik_instance
 
 
 def test(kernel_name="test"):
@@ -20,3 +55,25 @@ def test(kernel_name="test"):
     tik_instance.BuildCCE(kernel_name="test", inputs=[t_], outputs=[dst_gm])
 
     return tik_instance
+
+
+def test0(t_: Test):
+    a = numpy.random.random((16, 32)).astype(numpy.float16)
+
+    print(a.reshape((16, 2, 16)).transpose((1, 0, 2)))
+    tik_instance = t_.kernel0({'shape': a.shape})
+    o, = tik_instance.tikdb.start_debug(feed_dict={'q': a}, interactive=False)
+    assert (a != o).sum() == 0.
+
+
+def test1(t_: Test):
+    a = numpy.random.randint(0, 10, (16, 32)).astype(numpy.float16)
+    print(a.sum(axis=1))
+    tik_instance = t_.kernel1({'shape': a.shape})
+    o, = tik_instance.tikdb.start_debug(feed_dict={'q': a}, interactive=False)
+    print(o)
+
+
+if __name__ == '__main__':
+    t = Test()
+    test1(t)
