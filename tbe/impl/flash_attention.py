@@ -130,30 +130,34 @@ def row_max(_matrix, output, _tik_instance):
 
 def row_sum(_matrix, output, _tik_instance):  # TODO exist overflow problem
     shape = _matrix.shape
-    br, bc = shape[0], shape[1]
+    k1, br, k0 = shape[0], shape[1], shape[2]
 
-    r = br // 16
-    c = bc // 16
     assert br <= 128
-    assert bc <= 128
-    _block_matrix_T = _tik_instance.Tensor(dtype='float16', shape=[16, bc], name='_block_matrix', scope=tik.scope_ubuf)
-    _block_matrix_sum = _tik_instance.Tensor(dtype='float16', shape=[bc], name='_block_matrix_sum',
+    _block_matrix_sum = _tik_instance.Tensor(dtype='float16', shape=[br, k0], name='_block_matrix_sum',
                                              scope=tik.scope_ubuf)
+
     _16x16_matrix = _tik_instance.Tensor(dtype='float16', shape=[16, 16], name='_16x16_matrix', scope=tik.scope_ubuf)
-    src_scalar = _tik_instance.Scalar(init_value=0., dtype='float16')
-    _tik_instance.vec_dup(br, output, src_scalar, 1, 0)
-    _tik_instance.vec_dup(bc, _block_matrix_sum, src_scalar, 1, 0)
+    _block_matrix_T = _tik_instance.Tensor(dtype='float16', shape=[k0, br], name='_block_matrix_T',
+                                           scope=tik.scope_ubuf)
 
-    with _tik_instance.for_range(0, r) as i:
-        with _tik_instance.for_range(0, c) as j:
-            _tik_instance.data_move(_16x16_matrix, _matrix[i * (16 * bc) + j * 16:], 0, 16, 1, (c - 1), 0)
-            _tik_instance.vec_trans(_16x16_matrix, _16x16_matrix, 1, 1, 1)
-            _tik_instance.data_move(_block_matrix_T[j * 16:], _16x16_matrix, 0, 16, 1, 0, (c - 1))
-        with _tik_instance.for_range(0, 16) as z:
-            _tik_instance.vec_add(bc, _block_matrix_sum, _block_matrix_T[z, :], _block_matrix_sum, 1, 0, 0, 0)
+    _tik_instance.vec_dup(128, _block_matrix_sum, 0., (br * k0) // 128, 8)
+    _tik_instance.vec_dup(br, output, 0., 1, 0)
 
-        _tik_instance.vec_add(16, output[i * 16: (i + 1) * 16], _block_matrix_sum,
-                              output[i * 16: (i + 1) * 16], c, 0, 1, 0)
+    with _tik_instance.for_range(0, br // 8) as i:
+        # with _tik_instance.for_range(0, k1) as z:
+        _tik_instance.vec_add(128, _block_matrix_sum[i * 8:(i + 1) * 8, :], _matrix[i * 8 * k0],
+                              _block_matrix_sum[i * 8:(i + 1) * 8, :], k1, 0, br * k0 // 16, 0)
+
+    dst_list = [_block_matrix_T[i * br] for i in range(k0)]
+    src_list = [_block_matrix_sum[i * k0] for i in range(k0)]
+
+    repeat_times = br // k0
+
+    if repeat_times == 1:
+        _tik_instance.vec_trans_scatter(False, False, dst_list, src_list, repeat_times, 0, 0)
+    else:
+        _tik_instance.vec_trans_scatter(False, False, dst_list, src_list, repeat_times, 1, k0)
+    _tik_instance.vec_add(br, output, _block_matrix_T, output, k0, 0, br // 16, 0)
 
 
 def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
@@ -161,6 +165,7 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
 
     q_shape = q_type['shape']
     k_shape = k_type['shape']
+    v_shape = v_type['shape']
     assert q_shape[1] == k_shape[0]
     assert q_shape[1] % 16 == 0
     assert q_shape[0] % 16 == 0
@@ -174,6 +179,8 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
     n1 = (k_shape[1] + n0 - 1) // 16
     n = n1 * n0
 
+    d = k1 * k0
+
     q = tik_instance.Tensor(dtype='float16', shape=q_type['shape'], name="q", scope=tik.scope_gm)
     q_ = tik_instance.Tensor(dtype='float16', shape=[k1, m, k0], name="q_", scope=tik.scope_gm, is_workspace=True)
 
@@ -183,7 +190,7 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
     v = tik_instance.Tensor(dtype='float16', shape=v_type['shape'], name='v', scope=tik.scope_gm)
     v_ = tik_instance.Tensor(dtype='float16', shape=[k1, n, k0], name='v_', scope=tik.scope_gm, is_workspace=True)
 
-    O = tik_instance.Tensor(dtype='float16', shape=[k1, m, k0], name='O', scope=tik.scope_gm)
+    O = tik_instance.Tensor(dtype='float16', shape=[m // k0, d, k0], name='O', scope=tik.scope_gm)
     L = tik_instance.Tensor(dtype='float16', shape=[m], name='L', scope=tik.scope_gm)
     M = tik_instance.Tensor(dtype='float16', shape=[m], name='M', scope=tik.scope_gm)
 
@@ -202,6 +209,21 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
     assert block_size_c // 16
     sij = tik_instance.Tensor(dtype='float16', shape=[block_size_c // 16, block_size_r, 16], name='sij',
                               scope=tik.scope_gm, is_workspace=True)
+
+    r_diag_Li_k1mk0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r // 16, block_size_r, 16],
+                                          name='r_diag_Li_k1mk0', scope=tik.scope_gm, is_workspace=True)
+
+    r_diag_Li_new_k1mk0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r // 16, block_size_r, 16],
+                                              name='r_diag_Li_new_k1mk0', scope=tik.scope_gm, is_workspace=True)
+
+    Oi_mul0 = tik_instance.Tensor(dtype='float16', shape=[d // k0, block_size_r, k0], name='Oi_mul0',
+                                  scope=tik.scope_gm, is_workspace=True)
+    Oi_mul1 = tik_instance.Tensor(dtype='float16', shape=[d // k0, block_size_r, k0], name='Oi_mul1',
+                                  scope=tik.scope_gm, is_workspace=True)
+
+    pij_gm = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, block_size_r, k0], name='pij_ub',
+                                 scope=tik.scope_gm, is_workspace=True)
+
     with tik_instance.for_range(0, tc) as j:
         # kj = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj', scope=tik.scope_gm)
         # vj = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='vj', scope=tik.scope_gm)
@@ -213,7 +235,7 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
 
             block_matmul(qi, kj, sij, tik_instance)
 
-            sij_ub = tik_instance.Tensor(dtype='float16', shape=[block_size_c // 16, block_size_r, 16], name='sij',
+            sij_ub = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, block_size_r, k0], name='sij',
                                          scope=tik.scope_ubuf)
 
             tik_instance.data_move(sij_ub, sij, 0, 1, (block_size_r * block_size_c) // 16, 0, 0)
@@ -222,11 +244,11 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
                                       scope=tik.scope_ubuf)
             row_max(sij_ub, Mij, tik_instance)
 
-            pij = tik_instance.Tensor(dtype='float16', shape=[block_size_r, block_size_c], name='mij',
+            pij = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, block_size_r, k0], name='mij',
                                       scope=tik.scope_ubuf)
             with tik_instance.for_range(0, block_size_r) as br:
                 row_max_oi = tik_instance.Scalar(dtype='float16', name='row_max_oi', init_value=Mij[br])
-                tik_instance.vec_dup(block_size_c, pij[br, :], row_max_oi, 1, block_size_c // 16)
+                tik_instance.vec_dup(k0, pij[br * k0], row_max_oi, pij.shape[0], (block_size_r * k0) // 16)
 
             p_mask = 128
             assert (block_size_r * block_size_c) % 128 == 0
@@ -240,6 +262,10 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
 
             Mi = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Mi', scope=tik.scope_ubuf)
             Li = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li', scope=tik.scope_ubuf)
+            # Oi = tik_instance.Tensor(dtype='float16', shape=[block_size_r // k0, d, k0], name='Oi',
+            #                          scope=tik.scope_ubuf)
+
+            Oi = O[i * (block_size_r // k0): (i + 1) * (block_size_r // k0), :, :]
 
             Mi_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Mi_new', scope=tik.scope_ubuf)
             Li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_new', scope=tik.scope_ubuf)
@@ -248,8 +274,17 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
             Li_exp0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_exp0', scope=tik.scope_ubuf)
             Li_exp1 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_exp1', scope=tik.scope_ubuf)
 
-            tik_instance.data_move(Mi, M, 0, 1, block_size_r // 16, 0, 0)
-            tik_instance.data_move(Li, L, 0, 1, block_size_r // 16, 0, 0)
+            Oi_exp0 = tik_instance.Tensor(dtype='float16', shape=[d // k0, block_size_r, k0], name='Oi_exp0',
+                                          scope=tik.scope_ubuf)
+            Oi_exp1 = tik_instance.Tensor(dtype='float16', shape=[d // k0, block_size_r, k0], name='Oi_exp1',
+                                          scope=tik.scope_ubuf)
+
+            tik_instance.data_move(Mi, M[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
+            tik_instance.data_move(Li, L[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
+            # tik_instance.data_move(Oi, O[i * block_size_r * d], 0, 1, block_size_r * d // 16, 0, 0)
+
+            # transpose_right_matrix(tik_instance, O[i * block_size_r * d: (i + 1) * block_size_r * d], Oi, 'float16',
+            #                        Oi.shape[0], d, Oi.shape[2])
 
             tik_instance.vec_max(block_size_r, Mi_new, Mij, Mi, 1, 0, 0, 0)
 
@@ -268,8 +303,37 @@ def flash_attention(q_type, k_type, v_type, kernel_name="FlashAttention"):
             r_diag_Li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r, block_size_r],
                                                 name='r_diag_Li_new', scope=tik.scope_ubuf)
 
+            r_diag_Li = tik_instance.Tensor(dtype='float16', shape=[block_size_r, block_size_r], name='r_diag_Li',
+                                            scope=tik.scope_ubuf)
+
+            tik_instance.vec_dup(128, r_diag_Li_new, 0., (block_size_r * block_size_r) // 128, 8)
+            tik_instance.vec_dup(128, r_diag_Li, 0., (block_size_r * block_size_r) // 128, 8)
+
             with tik_instance.for_range(0, block_size_r) as z:
-                r_diag_Li_new[z, z] = 1.
+                r_diag_Li[z, z] = Li[z]
+
+            with tik_instance.for_range(0, block_size_r) as z:
+                r_diag_Li_new[z, z] = Li_new[z]
+
+            with tik_instance.for_range(0, block_size_r) as z:
+                scalar0 = tik_instance.Scalar(dtype='float16', name='Oi_exp0_z', init_value=Li_exp0[z])
+                scalar1 = tik_instance.Scalar(dtype='float16', name='Oi_exp1_z', init_value=Li_exp0[z])
+
+                tik_instance.vec_dup(k0, Oi_exp0[z * k0], scalar0, Oi_exp0.shape[0], (block_size_r * k0) // 16)
+                tik_instance.vec_dup(k0, Oi_exp1[z * k0], scalar1, Oi_exp1.shape[0], (block_size_r * k0) // 16)
+
+            transpose_left_matrix(tik_instance, r_diag_Li, r_diag_Li_k1mk0, 'float16', block_size_r // k0, block_size_r,
+                                  k0)
+
+            transpose_left_matrix(tik_instance, r_diag_Li_new, r_diag_Li_new_k1mk0, 'float16', block_size_r // k0,
+                                  block_size_r, k0)
+
+            block_matmul(r_diag_Li_k1mk0, Oi, Oi_mul0, tik_instance)
+
+            tik_instance.data_move(pij_gm, pij, 0, 1, (block_size_c * block_size_r) // 16, 0, 0)
+            block_matmul(pij_gm, vj, Oi_mul1, tik_instance)
+
+            tik_instance.vec_mul()
 
     transpose_left_matrix(tik_instance, q, q_, 'float16', k1, m, k0)
     transpose_right_matrix(tik_instance, k, k_, 'float16', k1, n, k0)

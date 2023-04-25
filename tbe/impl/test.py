@@ -26,13 +26,13 @@ class Test:
         tik_instance = tik.Tik(disable_debug=False)
         q = tik_instance.Tensor(dtype='float16', shape=q_shape, name="q", scope=tik.scope_gm)
         q_ = tik_instance.Tensor(dtype='float16', shape=q_shape, name="q", scope=tik.scope_ubuf)
-        tik_instance.data_move(q_, q, 0, 1, (q_shape[0] * q_shape[1]) // 16, 0, 0)
-        _output = tik_instance.Tensor(dtype='float16', shape=[q_shape[0]], name='output', scope=tik.scope_ubuf)
+        tik_instance.data_move(q_, q, 0, 1, (q_shape[0] * q_shape[1] * q_shape[2]) // 16, 0, 0)
+        _output = tik_instance.Tensor(dtype='float16', shape=[q_shape[1]], name='output', scope=tik.scope_ubuf)
         row_sum(q_, _output, tik_instance)
 
-        output = tik_instance.Tensor(dtype='float16', shape=[q_shape[0]], name='output', scope=tik.scope_gm)
+        output = tik_instance.Tensor(dtype='float16', shape=[q_shape[1]], name='output', scope=tik.scope_gm)
 
-        tik_instance.data_move(output, _output, 0, 1, q_shape[0] // 16, 0, 0)
+        tik_instance.data_move(output, _output, 0, 1, q_shape[1] // 16, 0, 0)
         tik_instance.BuildCCE(kernel_name="kernel1", inputs=[q], outputs=[output])
 
         return tik_instance
@@ -67,10 +67,34 @@ def test0(t_: Test):
 
 
 def test1(t_: Test):
-    a = numpy.random.randint(0, 10, (16, 32)).astype(numpy.float16)
-    print(a.sum(axis=1))
+    a = numpy.random.random((2, 16, 16)).astype(numpy.float16)
+    print(a.sum(axis=0).sum(axis=1))
     tik_instance = t_.kernel1({'shape': a.shape})
     o, = tik_instance.tikdb.start_debug(feed_dict={'q': a}, interactive=False)
+    print(o)
+
+
+def test2(t_: Test):
+    a = numpy.zeros((2, 16, 16), dtype=numpy.float16)
+
+    a[:, 1, :] = 2.
+    tik_instance = tik.Tik(disable_debug=False)
+
+    q = tik_instance.Tensor(dtype='float16', shape=[2, 16, 16], name="q", scope=tik.scope_gm)
+    q_ = tik_instance.Tensor(dtype='float16', shape=[2, 16, 16], name="q_", scope=tik.scope_ubuf)
+    scalar = tik_instance.Scalar(dtype='float16', name='scalar', init_value=2.)
+    tik_instance.vec_dup(16, q_[1 * 16], scalar, 2, 16)
+
+    o = tik_instance.Tensor(dtype='float16', shape=[2, 16, 16], name='o', scope=tik.scope_gm)
+
+    tik_instance.data_move(o, q_, 0, 1, 32, 0, 0)
+
+    tik_instance.BuildCCE(kernel_name="test2", inputs=[q], outputs=[o])
+
+    o, = tik_instance.tikdb.start_debug(feed_dict={'q': a}, interactive=False)
+
+    print(a)
+
     print(o)
 
 
