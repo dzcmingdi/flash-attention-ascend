@@ -98,6 +98,22 @@ def test2(t_: Test):
     print(o)
 
 
+def test3(t_: Test):
+    a = numpy.random.randint(0, 10, (16, 16)).astype(numpy.float16)
+    tik_instance = tik.Tik(disable_debug=False)
+    q = tik_instance.Tensor(dtype='float16', shape=[16, 16], name="q", scope=tik.scope_gm)
+
+    q_ = tik_instance.Tensor(dtype='float16', shape=[16, 16], name="q_", scope=tik.scope_ubuf)
+
+    o = tik_instance.Tensor(dtype='float16', shape=[16, 16], name="o", scope=tik.scope_gm)
+
+    tik_instance.data_move(q_, q, 0, 1, 16, 0, 0)
+    tik_instance.data_move(o[0], q_, 0, 1, 16, 0, 0)
+    tik_instance.BuildCCE(kernel_name="test2", inputs=[q], outputs=[o])
+    o, = tik_instance.tikdb.start_debug(feed_dict={'q': a}, interactive=False)
+    print(o)
+
+
 if __name__ == '__main__':
     t = Test()
-    test1(t)
+    test3(t)
