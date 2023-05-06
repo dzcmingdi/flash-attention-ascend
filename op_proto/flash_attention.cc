@@ -20,7 +20,7 @@ IMPLEMT_COMMON_INFERFUNC(FlashAttentionInferShape)
 
     tensor_desc_output.SetShape(ge::Shape(dims_o));
 
-    tensor_desc_output.SetDataType(q.GetDataType());
+    tensor_desc_output.SetDataType(desc_q.GetDataType());
     (void) op.UpdateOutputDesc("y", tensor_desc_output);
     return GRAPH_SUCCESS;
 }

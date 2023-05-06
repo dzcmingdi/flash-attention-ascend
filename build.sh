@@ -15,12 +15,13 @@
 # ASCEND_TENSOR_COMPILER_INCLUDE: The path of the header file of the Compiler package, where "/usr/local/Ascend/compiler/include" is the
 #                                 default installation path. If user defines the installation path, please modify it.
 # Uncomment and modify it when you specified installation path of Compiler.
-# export ASCEND_TENSOR_COMPILER_INCLUDE=/usr/local/Ascend/compiler/include
+export INSTALL_DIR=/home/HwHiAiUser/Ascend/ascend-toolkit/latest/
+export ASCEND_TENSOR_COMPILER_INCLUDE=$INSTALL_DIR/include
 
 # TOOLCHAIN_DIR: The path of the cross compilation tool, where "/usr/local/Ascend/toolkit/toolchain/hcc" is the
 #                default installation path. If user defines the installation path, please modify it.
 # Uncomment and modify it when you specified installation path of toolkit.
-# export TOOLCHAIN_DIR=/usr/local/Ascend/toolkit/toolchain/hcc
+ export TOOLCHAIN_DIR=/usr
 
 # AICPU_KERNEL_TARGET: The name of the custom operator kernels library, which "cust_aicpu_kernels" is the
 #                      default installation name. If user defines the installation name, please modify it.
@@ -35,7 +36,7 @@ export AICPU_KERNEL_TARGET=cust_aicpu_kernels
 # export SYSTEM_INFO=centos_x86_64
 
 # The version of soc.
-# export AICPU_SOC_VERSION=Ascend910
+ export AICPU_SOC_VERSION=Ascend310
 
 ###### The following logic can be used without modification ######
 
