@@ -324,18 +324,20 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
         with tik_instance.for_range(0, tc) as j:
             #
 
-            kj_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj_', scope=tik.scope_ubuf)
-            vj_ = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj_',
-                                      scope=tik.scope_ubuf)
+            with tik_instance.new_stmt_scope(disable_sync=True):
+                kj_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj_',
+                                          scope=tik.scope_ubuf)
+                vj_ = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj_',
+                                          scope=tik.scope_ubuf)
 
-            tik_instance.data_move(kj_, k_[j * block_size_c * k0], 0, k1, (block_size_c * k0) // 16,
-                                   (n - block_size_c) * k0 // 16, 0)
-            tik_instance.data_move(vj_, v_[j * block_size_c * d], 0, 1, (block_size_c * d) // 16, 0, 0)
+                tik_instance.data_move(kj_, k_[j * block_size_c * k0], 0, k1, (block_size_c * k0) // 16,
+                                       (n - block_size_c) * k0 // 16, 0)
+                tik_instance.data_move(vj_, v_[j * block_size_c * d], 0, 1, (block_size_c * d) // 16, 0, 0)
 
-            tik_instance.data_move(kj, kj_, 0, 1, block_size_c * d // 16, 0, 0)
-            tik_instance.data_move(vj, vj_, 0, 1, block_size_c * d // 16, 0, 0)
+                tik_instance.data_move(kj, kj_, 0, 1, block_size_c * d // 16, 0, 0)
+                tik_instance.data_move(vj, vj_, 0, 1, block_size_c * d // 16, 0, 0)
 
-            with tik_instance.for_range(0, ai_core_num, block_num=ai_core_num) as core_i:
+            with tik_instance.for_range(0, ai_core_num) as core_i:
                 qi = cores_qi[core_i * (block_size_r * d):(core_i + 1) * (block_size_r * d)]
                 pij_gm = cores_pij_gm[
                          core_i * (block_size_r * block_size_c): (core_i + 1) * (block_size_r * block_size_c)]
@@ -549,22 +551,22 @@ if __name__ == '__main__':
     tbe_platform.set_current_compile_soc_info("Ascend310")
 
     # m = n = 16
-    d = 32
+    d = 192
 
-    n = 32
-    input_q = numpy.arange(0, d).astype(numpy.float16) / 100
-    input_q = numpy.broadcast_to(input_q, (2, n, d))
+    n = 128
+    input_q = numpy.random.random((1, n, d)).astype(numpy.float16)
+    # input_q = numpy.broadcast_to(input_q, (16, n, d))
 
-    input_k = numpy.arange(0, n).astype(numpy.float16) / 100
+    input_k = numpy.random.random((1, d, n)).astype(numpy.float16)
 
-    input_k = numpy.broadcast_to(input_k, (2, d, n))
-    input_v = numpy.arange(0, d).astype(numpy.float16) / 100
+    # input_k = numpy.broadcast_to(input_k, (16, d, n))
+    input_v = numpy.random.random((1, n, d)).astype(numpy.float16)
 
-    input_v = numpy.broadcast_to(input_v, (2, n, d))
+    # input_v = numpy.broadcast_to(input_v, (16, n, d))
 
-    # input_q /= numpy.sqrt(numpy.linalg.norm(input_q, ord=1, axis=1, keepdims=True))
-    # input_k /= numpy.sqrt(numpy.linalg.norm(input_k, ord=1, axis=0, keepdims=True))
-    # input_v /= numpy.sqrt(numpy.linalg.norm(input_v, ord=1, axis=1, keepdims=True))
+    input_q /= numpy.sqrt(numpy.linalg.norm(input_q, ord=1, axis=2, keepdims=True))
+    input_k /= numpy.sqrt(numpy.linalg.norm(input_k, ord=1, axis=1, keepdims=True))
+    input_v /= numpy.sqrt(numpy.linalg.norm(input_v, ord=1, axis=2, keepdims=True))
 
     # print(input_q)
     # print(numpy.matmul(input_q[48:64, :], input_k[:, 48:64]))

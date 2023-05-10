@@ -1,0 +1,46 @@
+[
+  {
+    "op": "FlashAttention",
+    "name": "flash-attention",
+    "input_desc": [
+      {
+        "format": "ND",
+        "shape": [
+          16,
+          64,
+          192
+        ],
+        "type": "float16"
+      },
+      {
+        "format": "ND",
+        "shape": [
+          16,
+          192,
+          64
+        ],
+        "type": "float16"
+      },
+      {
+        "format": "ND",
+        "shape": [
+          16,
+          64,
+          192
+        ],
+        "type": "float16"
+      }
+    ],
+    "output_desc": [
+      {
+        "format": "ND",
+        "shape": [
+          16,
+          64,
+          192
+        ],
+        "type": "float16"
+      }
+    ]
+  }
+]
