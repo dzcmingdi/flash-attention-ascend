@@ -7,7 +7,7 @@
         "format": "ND",
         "shape": [
           16,
-          64,
+          128,
           192
         ],
         "type": "float16"
@@ -17,7 +17,7 @@
         "shape": [
           16,
           192,
-          64
+          128
         ],
         "type": "float16"
       },
@@ -25,7 +25,7 @@
         "format": "ND",
         "shape": [
           16,
-          64,
+          128,
           192
         ],
         "type": "float16"
@@ -36,7 +36,7 @@
         "format": "ND",
         "shape": [
           16,
-          64,
+          128,
           192
         ],
         "type": "float16"
