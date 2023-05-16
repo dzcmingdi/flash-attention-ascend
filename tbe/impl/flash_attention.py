@@ -17,10 +17,11 @@ U_BUFFER_SIZE = tbe_platform.get_soc_spec("UB_SIZE")
 # M*K -> K1 * M * K0
 def transpose_left_matrix(tik_instance, mk_input_tensor, k1mk0_tensor, dtype, k1, m, k0):
     """change data format mk to k1mk0"""
+
     src_ub = tik_instance.Tensor(dtype, (k1, m, k0), name="src_ub", scope=tik.scope_ubuf)
 
     # data_move(m,k) --> (k1,m,k0)
-    with tik_instance.for_range(0, k1) as i:
+    with tik_instance.for_range(0, k1, thread_num=2) as i:
         tik_instance.data_move(src_ub[i * m * k0:], mk_input_tensor[i * k0:], 0, m, k0 * DTYPE_SIZE[dtype] // 32,
                                (k1 - 1) * k0 * DTYPE_SIZE[dtype] // 32, 0)
     # data_move out
@@ -29,7 +30,7 @@ def transpose_left_matrix(tik_instance, mk_input_tensor, k1mk0_tensor, dtype, k1
 
 # K*N -> K1 * N * K0
 def transpose_right_matrix(tik_instance, kn_input_tensor, k1nk0_tensor, dtype, k1, n, k0):
-    with tik_instance.for_range(0, k1) as index:
+    with tik_instance.for_range(0, k1, thread_num=2) as index:
         k1nk0_ub = tik_instance.Tensor(dtype, (n, k0), tik.scope_ubuf, "k1nk0_ub")
         src_ub = tik_instance.Tensor(dtype, (k0, n), tik.scope_ubuf, "src_ub")
         burst_len = k0 * n * DTYPE_SIZE[dtype] // 32
@@ -143,7 +144,7 @@ def row_max(_matrix, output, _tik_instance):
     _tik_instance.vec_dup(128, _block_matrix_max, -65504., (br * c0) // 128, 8)
     _tik_instance.vec_dup(br, output, -65504., 1, 0)
 
-    with _tik_instance.for_range(0, br // 8) as i:
+    with _tik_instance.for_range(0, br // 8, thread_num=2) as i:
         # with _tik_instance.for_range(0, k1) as z:
         _tik_instance.vec_max(128, _block_matrix_max[i * 8:(i + 1) * 8, :], _matrix[i * 8 * c0],
                               _block_matrix_max[i * 8:(i + 1) * 8, :], c1, 0, br * c0 // 16, 0)
@@ -190,7 +191,7 @@ def row_sum(_matrix, output, _tik_instance):  # TODO exist overflow problem
     _tik_instance.vec_dup(128, _block_matrix_sum, 0., (br * k0) // 128, 8)
     _tik_instance.vec_dup(br, output, 0., 1, 0)
 
-    with _tik_instance.for_range(0, br // 8) as i:
+    with _tik_instance.for_range(0, br // 8, thread_num=2) as i:
         # with _tik_instance.for_range(0, k1) as z:
         _tik_instance.vec_add(128, _block_matrix_sum[i * 8:(i + 1) * 8, :], _matrix[i * 8 * k0],
                               _block_matrix_sum[i * 8:(i + 1) * 8, :], k1, 0, br * k0 // 16, 0)
@@ -237,10 +238,10 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
 
     d = k1 * k0
 
-    block_size_r = 32
+    block_size_r = 128
     tr = m // block_size_r
 
-    block_size_c = 32
+    block_size_c = 128
     tc = n // block_size_c
 
     assert m % block_size_r == 0
@@ -248,65 +249,64 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
     assert block_size_c % 16 == 0
 
     q = tik_instance.Tensor(dtype='float16', shape=q_type['shape'], name="q", scope=tik.scope_gm)
-    # batch_q = tik_instance.Tensor(dtype='float16', shape=[m, d], name="bq", scope=tik.scope_gm, is_workspace=True)
-    q_ = tik_instance.Tensor(dtype='float16', shape=[k1, m, k0], name="q_", scope=tik.scope_gm, is_workspace=True)
 
     k = tik_instance.Tensor(dtype='float16', shape=k_type['shape'], name='k', scope=tik.scope_gm)
-    # batch_k = tik_instance.Tensor(dtype='float16', shape=[d, n], name="bk", scope=tik.scope_gm, is_workspace=True)
-
-    k_ = tik_instance.Tensor(dtype='float16', shape=[k1, n, k0], name='k_', scope=tik.scope_gm, is_workspace=True)
 
     v = tik_instance.Tensor(dtype='float16', shape=v_type['shape'], name='v', scope=tik.scope_gm)
-    # batch_v = tik_instance.Tensor(dtype='float16', shape=[n, d], name="bv", scope=tik.scope_gm, is_workspace=True)
-
-    v_ = tik_instance.Tensor(dtype='float16', shape=[n // k0, d, k0], name='v_', scope=tik.scope_gm, is_workspace=True)
 
     o = tik_instance.Tensor(dtype='float16', shape=[batch_size, m, d], name='o', scope=tik.scope_gm)
-    # o = tik_instance.Tensor(dtype='float16', shape=[m, d], name='o', scope=tik.scope_gm)
 
-    # batch_o = tik_instance.Tensor(dtype='float16', shape=[m, d], name='bo', scope=tik.scope_gm, is_workspace=True)
+    batch_o = tik_instance.Tensor(dtype='float16', shape=[m // k0, d, k0], name='O', scope=tik.scope_gm,
+                                  is_workspace=True)
+    batch_l = tik_instance.Tensor(dtype='float16', shape=[m], name='L', scope=tik.scope_gm, is_workspace=True)
+    batch_m = tik_instance.Tensor(dtype='float16', shape=[m], name='M', scope=tik.scope_gm, is_workspace=True)
 
-    O = tik_instance.Tensor(dtype='float16', shape=[m // k0, d, k0], name='O', scope=tik.scope_gm, is_workspace=True)
-    # O_ = tik_instance.Tensor(dtype='float16', shape=[block_size_r, d], name='O_', scope=tik.scope_gm,
-    #                          is_workspace=True)
-    L = tik_instance.Tensor(dtype='float16', shape=[m], name='L', scope=tik.scope_gm, is_workspace=True)
-    M = tik_instance.Tensor(dtype='float16', shape=[m], name='M', scope=tik.scope_gm, is_workspace=True)
+    cores_block_q = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0], name='block_q',
+                                        scope=tik.scope_gm,
+                                        is_workspace=True)
+    block_k = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='block_k', scope=tik.scope_gm,
+                                  is_workspace=True)
+    block_v = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='block_v',
+                                  scope=tik.scope_gm, is_workspace=True)
 
     cores_sij = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_c // k0, block_size_r, k0],
                                     name='sij',
                                     scope=tik.scope_gm, is_workspace=True)
 
-    cores_r_diag_Li_k1mk0 = tik_instance.Tensor(dtype='float16',
-                                                shape=[ai_core_num, block_size_r // k0, block_size_r, k0],
-                                                name='r_diag_Li_k1mk0', scope=tik.scope_gm, is_workspace=True)
+    # cores_r_diag_Li_k1mk0 = tik_instance.Tensor(dtype='float16',
+    #                                             shape=[ai_core_num, block_size_r // k0, block_size_r, k0],
+    #                                             name='r_diag_Li_k1mk0', scope=tik.scope_gm, is_workspace=True)
+    #
+    # cores_r_diag_Li_new_k1mk0 = tik_instance.Tensor(dtype='float16',
+    #                                                 shape=[ai_core_num, block_size_r // k0, block_size_r, k0],
+    #                                                 name='r_diag_Li_new_k1mk0', scope=tik.scope_gm, is_workspace=True)
 
-    cores_r_diag_Li_new_k1mk0 = tik_instance.Tensor(dtype='float16',
-                                                    shape=[ai_core_num, block_size_r // k0, block_size_r, k0],
-                                                    name='r_diag_Li_new_k1mk0', scope=tik.scope_gm, is_workspace=True)
-
-    cores_Oi = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r // k0, d, k0], name='Oi',
+    cores_oi = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r // k0, d, k0], name='cores_oi',
                                    scope=tik.scope_gm, is_workspace=True)
 
-    cores_Oi_mul0 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0], name='Oi_mul0',
+    cores_oi_mul0 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0],
+                                        name='cores_oi_mul0',
                                         scope=tik.scope_gm, is_workspace=True)
-    cores_Oi_mul0_ = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r, d], name='Oi_mul0_',
-                                         scope=tik.scope_gm, is_workspace=True)
+    # cores_oi_mul0_ = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r, d], name='cores_oi_mul0_',
+    #                                      scope=tik.scope_gm, is_workspace=True)
 
-    cores_Oi_mul1 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0], name='Oi_mul1',
+    cores_oi_mul1 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0],
+                                        name='cores_oi_mul1',
                                         scope=tik.scope_gm, is_workspace=True)
-    cores_Oi_mul2 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r // k0, d, k0], name='Oi_mul2',
-                                        scope=tik.scope_gm, is_workspace=True)
+    # cores_oi_mul2 = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_r // k0, d, k0],
+    #                                     name='cores_oi_mul2',
+    #                                     scope=tik.scope_gm, is_workspace=True)
     cores_pij_gm = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, block_size_c // k0, block_size_r, k0],
                                        name='pij_ub',
                                        scope=tik.scope_gm, is_workspace=True)
 
-    cores_qi = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0], name='qi',
-                                   scope=tik.scope_gm,
-                                   is_workspace=True)
-    kj = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj', scope=tik.scope_gm,
-                             is_workspace=True)
-    vj = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj', scope=tik.scope_gm,
-                             is_workspace=True)
+    # cores_qi = tik_instance.Tensor(dtype='float16', shape=[ai_core_num, k1, block_size_r, k0], name='qi',
+    #                                scope=tik.scope_gm,
+    #                                is_workspace=True)
+    # kj = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj', scope=tik.scope_gm,
+    #                          is_workspace=True)
+    # vj = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj', scope=tik.scope_gm,
+    #                          is_workspace=True)
 
     # transpose_left_matrix(tik_instance, q, q_, 'float16', k1, m, k0)
     # transpose_right_matrix(tik_instance, k, k_, 'float16', k1, n, k0)
@@ -316,70 +316,87 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
     # init_value(tik_instance, M, m, -65504.)
     with tik_instance.for_range(0, batch_size) as b:
         # with tik_instance.new_stmt_scope(disable_sync=True):
-            # init_value(tik_instance, O, k1 * m * k0, value=0.)
-            # init_value(tik_instance, L, m, value=0.)
-            # init_value(tik_instance, M, m, -65504.)
-            # transpose_left_matrix(tik_instance, q[b * m * d: (b + 1) * m * d], q_, 'float16', k1, m, k0)
-            # transpose_right_matrix(tik_instance, k[b * m * d: (b + 1) * m * d], k_, 'float16', k1, n, k0)
-            # transpose_right_matrix(tik_instance, v[b * m * d: (b + 1) * m * d], v_, 'float16', n // k0, d, k0)
-        with tik_instance.for_range(0, tc, thread_num=2) as j:
-            #
+
+        with tik_instance.for_range(0, tr, thread_num=2) as i:
+            init_value(tik_instance, batch_o[i * block_size_r * d: (i + 1) * (block_size_r * d)], block_size_r * d,
+                       value=0.)
+        init_value(tik_instance, batch_l, m, value=0.)
+        init_value(tik_instance, batch_m, m, -65504.)
+        # transpose_left_matrix(tik_instance, q[b * m * d: (b + 1) * m * d], q_, 'float16', k1, m, k0)
+        # transpose_right_matrix(tik_instance, k[b * m * d: (b + 1) * m * d], k_, 'float16', k1, n, k0)
+        # transpose_right_matrix(tik_instance, v[b * m * d: (b + 1) * m * d], v_, 'float16', n // k0, d, k0)
+        with tik_instance.for_range(0, tc) as j:
+            with tik_instance.new_stmt_scope(disable_sync=False):
+                # kj_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj_',
+                #                           scope=tik.scope_ubuf)
+                # vj_ = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj_',
+                #                           scope=tik.scope_ubuf)
+                #
+                # tik_instance.data_move(kj_, k_[j * block_size_c * k0], 0, k1, (block_size_c * k0) // 16,
+                #                        (n - block_size_c) * k0 // 16, 0)
+                # tik_instance.data_move(vj_, v_[j * block_size_c * d], 0, 1, (block_size_c * d) // 16, 0, 0)
+                #
+                # tik_instance.data_move(kj, kj_, 0, 1, block_size_c * d // 16, 0, 0)
+                # tik_instance.data_move(vj, vj_, 0, 1, block_size_c * d // 16, 0, 0)
+                block_k_ub = tik_instance.Tensor(dtype='float16', shape=block_k.shape, name='block_k_ub',
+                                                 scope=tik.scope_ubuf)
+                index_k = b * d * n + j * block_size_c
+
+                tik_instance.data_move(block_k_ub, k[index_k], 0, d, block_size_c // 16, (n - block_size_c) // 16, 0)
+                tik_instance.data_move(block_k, block_k_ub, 0, 1, block_size_c * d // 16, 0, 0)
 
             with tik_instance.new_stmt_scope(disable_sync=True):
-                kj_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_c, k0], name='kj_',
-                                          scope=tik.scope_ubuf)
-                vj_ = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, d, k0], name='vj_',
-                                          scope=tik.scope_ubuf)
-
-                tik_instance.data_move(kj_, k_[j * block_size_c * k0], 0, k1, (block_size_c * k0) // 16,
-                                       (n - block_size_c) * k0 // 16, 0)
-                tik_instance.data_move(vj_, v_[j * block_size_c * d], 0, 1, (block_size_c * d) // 16, 0, 0)
-
-                tik_instance.data_move(kj, kj_, 0, 1, block_size_c * d // 16, 0, 0)
-                tik_instance.data_move(vj, vj_, 0, 1, block_size_c * d // 16, 0, 0)
+                index_v = b * d * n + j * block_size_c * d
+                transpose_right_matrix(tik_instance, block_k, block_k, 'float16', k1, block_size_c, k0)
+                transpose_right_matrix(tik_instance, v[index_v: index_v + block_size_c * d], block_v, 'float16',
+                                       block_size_c // k0, d, k0)
 
             with tik_instance.for_range(0, ai_core_num, block_num=ai_core_num) as core_i:
-                qi = cores_qi[core_i * (block_size_r * d):(core_i + 1) * (block_size_r * d)]
+                # qi = cores_qi[core_i * (block_size_r * d):(core_i + 1) * (block_size_r * d)]
+
+                block_q = cores_block_q[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
                 pij_gm = cores_pij_gm[
                          core_i * (block_size_r * block_size_c): (core_i + 1) * (block_size_r * block_size_c)]
-                Oi_mul2 = cores_Oi_mul2[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
-                Oi_mul1 = cores_Oi_mul1[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
-                Oi_mul0_ = cores_Oi_mul0_[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
-                Oi_mul0 = cores_Oi_mul0[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
-                Oi = cores_Oi[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
-                r_diag_Li_new_k1mk0 = cores_r_diag_Li_new_k1mk0[
-                                      core_i * (block_size_r * block_size_r): (core_i + 1) * (
-                                              block_size_r * block_size_r)]
-                r_diag_Li_k1mk0 = cores_r_diag_Li_k1mk0[
-                                  core_i * (block_size_r * block_size_r): (core_i + 1) * (block_size_r * block_size_r)]
+                # oi_mul2 = cores_oi_mul2[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
+                oi_mul1 = cores_oi_mul1[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
+
+                # oi_mul0_ = cores_oi_mul0_[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
+                oi_mul0 = cores_oi_mul0[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
+                # oi = cores_oi[core_i * (block_size_r * d): (core_i + 1) * (block_size_r * d)]
+                # r_diag_Li_new_k1mk0 = cores_r_diag_Li_new_k1mk0[
+                #                       core_i * (block_size_r * block_size_r): (core_i + 1) * (
+                #                               block_size_r * block_size_r)]
+                # r_diag_Li_k1mk0 = cores_r_diag_Li_k1mk0[
+                #                   core_i * (block_size_r * block_size_r): (core_i + 1) * (block_size_r * block_size_r)]
                 sij = cores_sij[core_i * (block_size_r * block_size_c): (core_i + 1) * (block_size_r * block_size_c)]
-
                 with tik_instance.for_range(0, tr // ai_core_num) as z:
-                    # kj = k_[:, j * block_size_c: (j + 1) * block_size_c, :]
-                    # vj = v_[(j * block_size_c) // k0: ((j + 1) * block_size_c) // k0, :, :]
-                    # qi = q_[:, i * block_size_r: (i + 1) * block_size_r, :]
-                    #
+                    i = core_i * (tr // ai_core_num) + z
                     with tik_instance.new_stmt_scope(disable_sync=False):
-                        i = core_i * (tr // ai_core_num) + z
-                        qi_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='qi_',
-                                                  scope=tik.scope_ubuf)
+                        # qi_ = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='qi_',
+                        #                           scope=tik.scope_ubuf)
+                        #
+                        # # TODO much time
+                        # tik_instance.data_move(qi_, q_[i * block_size_r * k0], 0, k1, (block_size_r * k0) // 16,
+                        #                        (m - block_size_r) * k0 // 16, 0)
+                        #
+                        # tik_instance.data_move(qi, qi_, 0, 1, block_size_r * d // 16, 0, 0)
+                        index = b * m * d + i * block_size_r * d
+                        transpose_left_matrix(tik_instance, q[index: index + block_size_r * d], block_q, 'float16', k1,
+                                              block_size_r, k0)
 
-                        tik_instance.data_move(qi_, q_[i * block_size_r * k0], 0, k1, (block_size_r * k0) // 16,
-                                               (m - block_size_r) * k0 // 16, 0)
-                        tik_instance.data_move(qi, qi_, 0, 1, block_size_r * d // 16, 0, 0)
-
-                        block_matmul(qi, kj, sij, qi_.shape, kj.shape, [block_size_c // k0, block_size_r, k0],
+                        block_matmul(block_q, block_k, sij, [k1, block_size_r, k0], block_k.shape,
+                                     [block_size_c // k0, block_size_r, k0],
                                      tik_instance)
-                    #
 
+                    # tik_instance.tik_continue()
                     # tik_instance.tikdb.debug_print('"sij"')
 
                     # tik_instance.tikdb.debug_print('sij')
 
-                    Mij = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='mij',
+                    mij = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='mij',
                                               scope=tik.scope_ubuf)
-
-                    Lij = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li', scope=tik.scope_ubuf)
+                    #
+                    lij = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='lij', scope=tik.scope_ubuf)
 
                     with tik_instance.new_stmt_scope(disable_sync=False):
                         sij_ub = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, block_size_r, k0],
@@ -387,13 +404,13 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
                                                      scope=tik.scope_ubuf)
 
                         tik_instance.data_move(sij_ub, sij, 0, 1, (block_size_r * block_size_c) // 16, 0, 0)
-                        row_max(sij_ub, Mij, tik_instance)
+                        row_max(sij_ub, mij, tik_instance)
 
                         pij = tik_instance.Tensor(dtype='float16', shape=[block_size_c // k0, block_size_r, k0],
                                                   name='mij',
                                                   scope=tik.scope_ubuf)
                         with tik_instance.for_range(0, block_size_r) as br:
-                            row_max_oi = tik_instance.Scalar(dtype='float16', name='row_max_oi', init_value=Mij[br])
+                            row_max_oi = tik_instance.Scalar(dtype='float16', name='row_max_oi', init_value=mij[br])
                             tik_instance.vec_dup(k0, pij[br * k0], row_max_oi, pij.shape[0], (block_size_r * k0) // 16)
 
                         p_mask = 128
@@ -402,139 +419,146 @@ def flash_attention(q_type, k_type, v_type, o_type, kernel_name="FlashAttention"
                         p_stride = p_mask // 16
                         tik_instance.vec_sub(p_mask, pij, sij_ub, pij, p_repeat_times, p_stride, p_stride, p_stride)
                         tik_instance.vec_exp(p_mask, pij, pij, p_repeat_times, p_stride, p_stride)
-                        row_sum(pij, Lij, tik_instance)
+                        row_sum(pij, lij, tik_instance)
                         tik_instance.data_move(pij_gm, pij, 0, 1, (block_size_c * block_size_r) // 16, 0, 0)
 
-                    with tik_instance.new_stmt_scope(disable_sync=False):
-                        Oi_ = tik_instance.Tensor(dtype='float16', shape=[block_size_r // k0, d, k0], name='Oi',
+                    oi = tik_instance.Tensor(dtype='float16', shape=[block_size_r // k0, d, k0], name='oi',
+                                             scope=tik.scope_ubuf)
+                    tik_instance.data_move(oi, batch_o[i * block_size_r * d], 0, 1, block_size_r * d // 16, 0, 0)
+
+                    # with tik_instance.new_stmt_scope(disable_sync=False):
+                    #     tik_instance.data_move(oi, oi_, 0, 1, block_size_r * d // 16, 0, 0)
+
+                    oi_exp0 = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='oi_exp0',
+                                                  scope=tik.scope_ubuf)
+                    oi_exp1 = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='oi_exp1',
                                                   scope=tik.scope_ubuf)
 
-                        tik_instance.data_move(Oi_, O[i * block_size_r * d], 0, 1, block_size_r * d // 16, 0, 0)
-                        tik_instance.data_move(Oi, Oi_, 0, 1, block_size_r * d // 16, 0, 0)
+                    r_diag_li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r, d],
+                                                        name='r_diag_li_new', scope=tik.scope_ubuf)
 
-                    # Oi = O[i * (block_size_r // k0): (i + 1) * (block_size_r // k0), :, :]
-
-                    Oi_exp0 = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='Oi_exp0',
-                                                  scope=tik.scope_ubuf)
-                    Oi_exp1 = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0], name='Oi_exp1',
-                                                  scope=tik.scope_ubuf)
-
-                    r_diag_Li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r, block_size_r],
-                                                        name='r_diag_Li_new', scope=tik.scope_ubuf)
-
-                    r_diag_Li = tik_instance.Tensor(dtype='float16', shape=[block_size_r, block_size_r],
-                                                    name='r_diag_Li',
+                    r_diag_li = tik_instance.Tensor(dtype='float16', shape=[block_size_r, d],
+                                                    name='r_diag_li',
                                                     scope=tik.scope_ubuf)
 
-                    Mi_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Mi_new',
+                    mi_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='mi_new',
                                                  scope=tik.scope_ubuf)
-                    Li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_new',
+                    li_new = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_new',
                                                  scope=tik.scope_ubuf)
 
                     with tik_instance.new_stmt_scope(disable_sync=False):
-                        Mi = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Mi', scope=tik.scope_ubuf)
-                        Li = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li', scope=tik.scope_ubuf)
+                        mi = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='mi', scope=tik.scope_ubuf)
+                        li = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li', scope=tik.scope_ubuf)
 
-                        Li_new_rec = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_new_rec',
+                        li_new_rec = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_new_rec',
                                                          scope=tik.scope_ubuf)
-                        Li_sub0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_sub0',
+                        li_sub0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_sub0',
                                                       scope=tik.scope_ubuf)
-                        Li_sub1 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_sub1',
+                        li_sub1 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_sub1',
                                                       scope=tik.scope_ubuf)
-                        Li_exp0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_exp0',
+                        li_exp0 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_exp0',
                                                       scope=tik.scope_ubuf)
-                        Li_exp1 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='Li_exp1',
+                        li_exp1 = tik_instance.Tensor(dtype='float16', shape=[block_size_r], name='li_exp1',
                                                       scope=tik.scope_ubuf)
 
-                        tik_instance.data_move(Mi, M[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
-                        tik_instance.data_move(Li, L[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
+                        tik_instance.data_move(mi, batch_m[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
+                        tik_instance.data_move(li, batch_l[i * block_size_r], 0, 1, block_size_r // 16, 0, 0)
 
-                        tik_instance.vec_max(block_size_r, Mi_new, Mij, Mi, 1, 0, 0, 0)
-
-                        # TODO: can merge Mi and Mij into one tensor to accelerate.
-                        tik_instance.vec_sub(block_size_r, Li_sub0, Mi, Mi_new, 1, 0, 0, 0)
-                        tik_instance.vec_sub(block_size_r, Li_sub1, Mij, Mi_new, 1, 0, 0, 0)
-                        tik_instance.vec_exp(block_size_r, Li_sub0, Li_sub0, 1, 0, 0)
-                        tik_instance.vec_exp(block_size_r, Li_sub1, Li_sub1, 1, 0, 0)
-                        tik_instance.data_move(Li_exp0, Li_sub0, 0, 1, block_size_r // 16, 0, 0)
-                        tik_instance.data_move(Li_exp1, Li_sub1, 0, 1, block_size_r // 16, 0, 0)
-
-                        tik_instance.vec_mul(block_size_r, Li_sub0, Li, Li_sub0, 1, 0, 0, 0)
-                        tik_instance.vec_mul(block_size_r, Li_sub1, Lij, Li_sub1, 1, 0, 0, 0)
-                        tik_instance.vec_add(block_size_r, Li_new, Li_sub0, Li_sub1, 1, 0, 0, 0)
-                        tik_instance.vec_rec(block_size_r, Li_new_rec, Li_new, 1, 0, 0)
-
-                        tik_instance.vec_dup(128, r_diag_Li_new, 0., (block_size_r * block_size_r) // 128, 8)
-                        tik_instance.vec_dup(128, r_diag_Li, 0., (block_size_r * block_size_r) // 128, 8)
-
-                        # with tik_instance.for_range(0, block_size_r) as z:
-                        #     r_diag_Li[z, z] = Li[z]
+                        tik_instance.vec_max(block_size_r, mi_new, mij, mi, 1, 0, 0, 0)
                         #
-                        # with tik_instance.for_range(0, block_size_r) as z:
-                        #     r_diag_Li_new[z, z] = Li_new_rec[z]
+                        # # TODO: can merge Mi and Mij into one tensor to accelerate.
+                        tik_instance.vec_sub(block_size_r, li_sub0, mi, mi_new, 1, 0, 0, 0)
+                        tik_instance.vec_sub(block_size_r, li_sub1, mij, mi_new, 1, 0, 0, 0)
+                        tik_instance.vec_exp(block_size_r, li_sub0, li_sub0, 1, 0, 0)
+                        tik_instance.vec_exp(block_size_r, li_sub1, li_sub1, 1, 0, 0)
+                        tik_instance.data_move(li_exp0, li_sub0, 0, 1, block_size_r // 16, 0, 0)
+                        tik_instance.data_move(li_exp1, li_sub1, 0, 1, block_size_r // 16, 0, 0)
 
-                        # with tik_instance.for_range(0, block_size_r) as z:
-                        #     scalar0 = tik_instance.Scalar(dtype='float16', name='Oi_exp0_z', init_value=Li_exp0[z])
-                        #     scalar1 = tik_instance.Scalar(dtype='float16', name='Oi_exp1_z', init_value=Li_exp1[z])
+                        tik_instance.vec_mul(block_size_r, li_sub0, li, li_sub0, 1, 0, 0, 0)
+                        tik_instance.vec_mul(block_size_r, li_sub1, lij, li_sub1, 1, 0, 0, 0)
+                        tik_instance.vec_add(block_size_r, li_new, li_sub0, li_sub1, 1, 0, 0, 0)
+                        tik_instance.vec_rec(block_size_r, li_new_rec, li_new, 1, 0, 0)
+
+                        # tik_instance.vec_dup(128, r_diag_Li_new, 0., (block_size_r * block_size_r) // 128, 8)
+                        # tik_instance.vec_dup(128, r_diag_Li, 0., (block_size_r * block_size_r) // 128, 8)
                         #
-                        #     tik_instance.vec_dup(k0, Oi_exp0[z * k0], scalar0, k1, (block_size_r * k0) // 16)
-                        #     tik_instance.vec_dup(k0, Oi_exp1[z * k0], scalar1, k1, (block_size_r * k0) // 16)
+                        with tik_instance.for_range(0, block_size_r, thread_num=2) as z:
+                            scalar0 = tik_instance.Scalar(dtype='float16', name='li_z', init_value=li[z])
+                            tik_instance.vec_dup(128, r_diag_li, scalar0, (block_size_r * d) // 128, 8)
+                            # r_diag_li[z, z] = Li[z]
+                        with tik_instance.for_range(0, block_size_r, thread_num=2) as z:
+                            scalar0 = tik_instance.Scalar(dtype='float16', name='li_new_z', init_value=li_new_rec[z])
 
+                            tik_instance.vec_dup(128, r_diag_li_new, scalar0, (block_size_r * d) // 128, 8)
+
+                            # r_diag_li_new[z, z] = Li_new_rec[z]
+                        with tik_instance.for_range(0, block_size_r, thread_num=2) as z:
+                            scalar0 = tik_instance.Scalar(dtype='float16', name='Oi_exp0_z', init_value=li_exp0[z])
+                            scalar1 = tik_instance.Scalar(dtype='float16', name='Oi_exp1_z', init_value=li_exp1[z])
+
+                            tik_instance.vec_dup(k0, oi_exp0[z * k0], scalar0, k1, (block_size_r * k0) // 16)
+                            tik_instance.vec_dup(k0, oi_exp1[z * k0], scalar1, k1, (block_size_r * k0) // 16)
+                    #
                     # transpose_left_matrix(tik_instance, r_diag_Li, r_diag_Li_k1mk0, 'float16', block_size_r // k0,
                     #                       block_size_r,
                     #                       k0)
-
+                    # #
                     # transpose_left_matrix(tik_instance, r_diag_Li_new, r_diag_Li_new_k1mk0, 'float16',
                     #                       block_size_r // k0,
                     #                       block_size_r, k0)
 
-                    block_matmul(r_diag_Li_k1mk0, Oi, Oi_mul0, [block_size_r // k0, block_size_r, k0],
-                                 [block_size_r // k0, d, k0], [d // k0, block_size_r, k0], tik_instance)
-
-                    block_matmul(pij_gm, vj, Oi_mul1, [block_size_c // k0, block_size_r, k0], vj.shape,
+                    # block_matmul(r_diag_Li_k1mk0, Oi, Oi_mul0, [block_size_r // k0, block_size_r, k0],
+                    #              [block_size_r // k0, d, k0], [d // k0, block_size_r, k0], tik_instance)
+                    #
+                    # tik_instance.vec_mul(128, r_diag_li, oi, r_diag_li, block_size_r * d // 128, 8, 8, 8)
+                    block_matmul(pij_gm, block_v, oi_mul1, [block_size_c // k0, block_size_r, k0], block_v.shape,
                                  [k1, block_size_r, k0], tik_instance)
-
+                    #
                     with tik_instance.new_stmt_scope(disable_sync=False):
-                        Oi_mul0_ub = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0],
-                                                         name='Oi_mul0_ub',
+                        # oi_mul0_ub = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0],
+                        #                                  name='oi_mul0_ub',
+                        #                                  scope=tik.scope_ubuf)
+                        oi_mul1_ub = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0],
+                                                         name='oi_mul1_ub',
                                                          scope=tik.scope_ubuf)
-                        Oi_mul1_ub = tik_instance.Tensor(dtype='float16', shape=[k1, block_size_r, k0],
-                                                         name='Oi_mul1_ub',
-                                                         scope=tik.scope_ubuf)
-                        tik_instance.data_move(Oi_mul0_ub, Oi_mul0, 0, 1, (block_size_r * d) // 16, 0, 0)
-                        tik_instance.data_move(Oi_mul1_ub, Oi_mul1, 0, 1, (block_size_r * d) // 16, 0, 0)
-                        tik_instance.vec_mul(128, Oi_mul0_ub, Oi_exp0, Oi_mul0_ub, (block_size_r * d) // 128, 8, 8, 8)
-                        tik_instance.vec_mul(128, Oi_mul1_ub, Oi_exp1, Oi_mul1_ub, (block_size_r * d) // 128, 8, 8, 8)
+                        # tik_instance.data_move(oi_mul0_ub, oi_mul0, 0, 1, (block_size_r * d) // 16, 0, 0)
+                        tik_instance.data_move(oi_mul1_ub, oi_mul1, 0, 1, (block_size_r * d) // 16, 0, 0)
+                        tik_instance.vec_mul(128, r_diag_li, oi_exp0, r_diag_li, (block_size_r * d) // 128, 8, 8, 8)
+                        tik_instance.vec_mul(128, oi_mul1_ub, oi_exp1, oi_mul1_ub, (block_size_r * d) // 128, 8, 8, 8)
 
-                        tik_instance.vec_add(128, Oi_mul0_ub, Oi_mul1_ub, Oi_mul0_ub, (block_size_r * d) // 128, 8,
+                        tik_instance.vec_add(128, r_diag_li, oi_mul1_ub, r_diag_li, (block_size_r * d) // 128, 8,
                                              8,
                                              8)
 
-                        tik_instance.data_move(Oi_mul0, Oi_mul0_ub, 0, 1, (block_size_r * d) // 16, 0, 0)
+                        # tik_instance.vec_mul(128, r_diag_li, r_diag_li_new, r_diag_li, (block_size_r * d) // 128, 8, 8,
+                        #                      8)
 
+                        # tik_instance.data_move(oi_mul0, oi_mul0_ub, 0, 1, (block_size_r * d) // 16, 0, 0)
+
+                    #
                     # transpose_output_matrix(tik_instance, Oi_mul0_, Oi_mul0, 'float16', d // k0, block_size_r, k0)
                     # transpose_right_matrix(tik_instance, Oi_mul0_, Oi_mul2, 'float16', block_size_r // k0, d, k0)
-
+                    #
                     # tik_instance.tikdb.debug_print('"Oi_mul"')
 
                     # tik_instance.tikdb.debug_print('Oi_mul2')
-                    block_matmul(r_diag_Li_new_k1mk0, Oi_mul2, Oi_mul1, [block_size_r // k0, block_size_r, k0],
-                                 [block_size_r // k0, d, k0], [d // k0, block_size_r, k0],
-                                 tik_instance)
+                    # block_matmul(r_diag_Li_new_k1mk0, Oi_mul2, Oi_mul1, [block_size_r // k0, block_size_r, k0],
+                    #              [block_size_r // k0, d, k0], [d // k0, block_size_r, k0],
+                    #              tik_instance)
                     # transpose_output_matrix(tik_instance, Oi_mul0_, Oi_mul1, 'float16', d // k0, block_size_r, k0)
                     # transpose_right_matrix(tik_instance, Oi_mul0_, Oi, 'float16',
                     #                        block_size_r // k0, d, k0)
-
+                    #
                     with tik_instance.new_stmt_scope(disable_sync=False):
-                        Oi_ = tik_instance.Tensor(dtype='float16', shape=[block_size_r // k0, d, k0], name='Oi_',
-                                                  scope=tik.scope_ubuf)
-                        tik_instance.data_move(Oi_, Oi, 0, 1, block_size_r * d // 16, 0, 0)
+                        # oi_ = tik_instance.Tensor(dtype='float16', shape=[block_size_r // k0, d, k0], name='Oi_',
+                        #                           scope=tik.scope_ubuf)
+                        # tik_instance.data_move(oi_, oi, 0, 1, block_size_r * d // 16, 0, 0)
 
-                        tik_instance.data_move(O[i * block_size_r * d], Oi_, 0, 1, block_size_r * d // 16, 0, 0)
+                        tik_instance.data_move(batch_o[i * block_size_r * d], oi, 0, 1, block_size_r * d // 16, 0, 0)
 
-                    tik_instance.data_move(L[i * block_size_r], Li_new, 0, 1, block_size_r // 16, 0, 0)
-                    tik_instance.data_move(M[i * block_size_r], Mi_new, 0, 1, block_size_r // 16, 0, 0)
-        # r_transpose_right_matrix(tik_instance, o[b * m * d: (b + 1) * m * d], O, 'float16', m // k0, d, k0)
+                    tik_instance.data_move(batch_l[i * block_size_r], li_new, 0, 1, block_size_r // 16, 0, 0)
+                    tik_instance.data_move(batch_m[i * block_size_r], mi_new, 0, 1, block_size_r // 16, 0, 0)
+        r_transpose_right_matrix(tik_instance, o[b * m * d: (b + 1) * m * d], batch_o, 'float16', m // k0, d, k0)
     tik_instance.BuildCCE(kernel_name="FlashAttention", inputs=[q, k, v], outputs=[o])
 
     return tik_instance
