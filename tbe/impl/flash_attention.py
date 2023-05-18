@@ -504,11 +504,7 @@ if __name__ == '__main__':
     # #
 
     # [m // k0, d, k0]
-    # import time
 
-    # st = time.time()
     og, = tik_instance.tikdb.start_debug(feed_dict=feed_dict, interactive=True)
-    # print(time.time() - st)
-    #
     ot = get_numpy_result(input_q, input_k, input_v)
     print((og - ot))
