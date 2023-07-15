@@ -1,1 +1,1 @@
-**Implement FlashAttention based on Huawei Ascend 310.**
+**FlashAttention Implementation based on Huawei Ascend 310.**
