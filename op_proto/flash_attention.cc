@@ -4,7 +4,7 @@ namespace ge {
 
 IMPLEMT_COMMON_INFERFUNC(FlashAttentionInferShape)
 {
-    TensorDesc tensor_desc_output = op.GetOutputDescByName("y");
+    TensorDesc tensor_desc_output = op.GetOutputDescByName("o");
     TensorDesc desc_q = op.GetInputDescByName("q");
     Shape q_shape = desc_q.GetShape();
     Shape v_shape = op.GetInputDescByName("v").GetShape();

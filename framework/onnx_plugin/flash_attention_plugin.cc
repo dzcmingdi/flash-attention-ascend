@@ -24,7 +24,7 @@ Status ParseParamFlashAttention(const ge::Operator& op_src, ge::Operator& op_des
 // register FlashAttention op info to GE
 REGISTER_CUSTOM_OP("FlashAttention")     // Set the registration name of operator
     .FrameworkType(ONNX)   // Operator name with the original framework
-    .OriginOpType("ascend_domain::1::FlashAttention")      // Set the original frame type of the operator
+    .OriginOpType("ai.onnx::11::FlashAttention")      // Set the original frame type of the operator
     .ParseParamsByOperatorFn(ParseParamFlashAttention) // Registering the callback function for parsing operator parameters
     .ImplyType(ImplyType::TVM);
 }  // namespace domi
