@@ -14,4 +14,4 @@
 ![img_2.png](img_2.png)
 
 #### Absolute Error(between Ascend Results and Numpy Results)
-|e| < 0.001
+$$|e| < 0.001$$
