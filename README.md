@@ -15,3 +15,6 @@
 
 #### Absolute Error(between Ascend Results and Numpy Results)
 $$|e| < 0.001$$
+
+
+[This link](https://github.com/dzcmingdi/flash-attention-ascend/releases/tag/v0.0.1) include all summary results.
